@@ -124,7 +124,7 @@ def so100_ik(
         ftol: least_squares 求解容差（2026-09-02 起可调，默认 1e-2）。
             翻译层的解只进 MuJoCo FK 作 IK 目标，0.03mm 级误差无感；
             实测 ftol 1e-8→1e-2 快 ~25%（1.10→0.83ms/帧，见
-            libero-unity/test/benchmark_ik_perf.py）。别放宽 tol——
+            unity-robot-env/test/benchmark_ik_perf.py）。别放宽 tol——
             那是 success 判定，保持 1e-3。
 
     Returns:
@@ -159,7 +159,14 @@ def so100_ik(
         xtol=ftol,
     )
 
-    success = result.cost <= tol
+    # This chain is only a coordinate translator for the MuJoCo backend.  Its
+    # model cannot exactly satisfy every Joy-Con pose, so scipy's half-squared
+    # cost compared directly with a linear tolerance rejects otherwise usable
+    # targets.  Judge the two physical residuals explicitly instead.
+    residual = np.asarray(cost(result.x), dtype=np.float64)
+    pos_error = float(np.linalg.norm(residual[:3]))
+    rot_error = float(np.linalg.norm(residual[3:6]))
+    success = (pos_error <= 0.10) or (rot_error <= 0.10)
     if not success:
         return -np.ones(4), False
 

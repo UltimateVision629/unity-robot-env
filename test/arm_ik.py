@@ -37,7 +37,7 @@ import numpy as np
 # 2026-09-13：utils/ 搬到了**本目录下**（原在 network/scripts/utils）。
 # 之前这里指向 `../../network/scripts` —— 那是被 SmolVlaNetwork 取代的遗留仓库，
 # 而采集/回放/推理三条链都挂着它，一旦有人清理 network/ 就全断。
-# 现在 libero-unity 自包含，不再依赖任何兄弟仓库。
+# 现在 unity-robot-env 自包含，不再依赖任何兄弟仓库。
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -57,6 +57,21 @@ INIT_ARM_Q = np.array([0.0, -3.14, 3.14, 0.0, -1.57])
 
 _SO100_HOME_XYZ = [0.111, 0.0, 0.098]
 
+# MuJoCo teleop stabilization.  The so100 translator has multiple nearby joint
+# solutions for the same Cartesian target.  Re-solving an unchanged target from
+# the previous solution makes its Wrist_Pitch walk by the 0.1 rad/frame smooth
+# cap until it reaches a limit.  Cache the translation while x/z are unchanged,
+# and drive the two wrist joints from operator-relative Joy-Con angles instead.
+_TRANSLATOR_POSITION_DEADBAND = 1e-4  # metres; stick steps are ~2-3 mm
+_WRIST_PITCH_LIMITS = (-1.60, 1.60)
+_WRIST_ROLL_LIMITS = (-2.79, 2.79)
+_WRIST_IK_WEIGHT = 1.0
+# Joy-Con pitch/roll are calibrated to zero by joyconrobotics.  Keep a 1:1
+# mapping here: the previous 10x gain was a temporary compensation for the
+# library resetting pitch/roll on every IMU update.  Retaining it after the
+# estimator fix would make ordinary controller movement hit the wrist limit.
+_WRIST_PITCH_GAIN = 1.0
+_WRIST_ROLL_GAIN = 1.0
 
 def _clamp_target_pose(tp: list[float]) -> list[float]:
     """Clamp Joy-Con target_pose to workspace limits (same as collect)."""
@@ -162,13 +177,28 @@ class MuJoCoIK(ArmIK):
         # solve from current_q[1:5] — collect_datasets resets to
         # _INIT_ARM_Q[1:5] home
         self._lerobot_warm = None
+        self._translator_target = None
+        self._translator_solution = None
+        self._operator_orientation_anchor = None
+        self._wrist_anchor = None
 
     def _reset_lerobot_warm(self, current_q):
-        self._lerobot_warm = np.asarray(current_q[1:5], dtype=np.float64).copy()
+        # MuJoCo's joint limits are a few milliradians wider than the legacy
+        # so100 translator's limits.  Keep only the translator warm-start in
+        # its feasible box; the actual command remains untouched.
+        self._lerobot_warm = np.clip(
+            np.asarray(current_q[1:5], dtype=np.float64),
+            np.array([-3.14158, -0.2, -1.5, -3.14158]),
+            np.array([0.2, 3.14158, 1.5, 3.14158]),
+        )
 
     def reset_warm(self):
         """Forget the tracked translation warm (per-episode reset)."""
         self._lerobot_warm = None
+        self._translator_target = None
+        self._translator_solution = None
+        self._operator_orientation_anchor = None
+        self._wrist_anchor = None
 
     def solve(self, target_pose, gripper, current_q, tol: float = 1e-8):
         # tol: least_squares 容差（采集闭环可放宽到 1e-3 提速；
@@ -181,24 +211,92 @@ class MuJoCoIK(ArmIK):
         #    trajectory.
         tp = _clamp_target_pose(target_pose)
         yaw_r = tp[5]
-        target_gpos = _target_gpos(tp)
-        if self._lerobot_warm is None:
-            self._reset_lerobot_warm(current_q)
-        qpos_inv, ok = so100_ik(self._lerobot_warm, target_gpos)
-        if not ok:
-            return None, current_q
-        self._lerobot_warm = np.asarray(qpos_inv[:4], dtype=np.float64).copy()
+        # _go_home() calls solve() once with an exact zero orientation before
+        # the first live Joy-Con sample.  Keep that legacy home solve, then use
+        # the first real sample as the neutral wrist orientation.
+        is_home_seed = (
+            self._operator_orientation_anchor is None
+            and abs(tp[0] - CONTROL_GLIMIT[0][0]) < 1e-9
+            and abs(tp[2] - _SO100_HOME_XYZ[2]) < 1e-9
+            and np.max(np.abs(np.asarray(tp[3:6], dtype=np.float64))) < 1e-9
+        )
+
+        if is_home_seed:
+            target_gpos = _target_gpos(tp)
+            if self._lerobot_warm is None:
+                self._reset_lerobot_warm(current_q)
+            qpos_inv, ok = so100_ik(self._lerobot_warm, target_gpos)
+            if not ok:
+                return None, current_q
+            self._lerobot_warm = np.asarray(qpos_inv[:4], dtype=np.float64).copy()
+            # Home is a reset operation, so preserve its explicit neutral wrist
+            # instead of inheriting the translator's first -0.1 rad step.
+            wrist_target = np.asarray(current_q[3:5], dtype=np.float64).copy()
+        else:
+            if self._operator_orientation_anchor is None:
+                self._operator_orientation_anchor = np.asarray(
+                    [tp[3], tp[4]], dtype=np.float64)
+                self._wrist_anchor = np.asarray(
+                    current_q[3:5], dtype=np.float64).copy()
+                # Start the live translator from the joints actually commanded
+                # by the home solve, not from its separate internal branch.
+                self._reset_lerobot_warm(current_q)
+                self._translator_target = None
+                self._translator_solution = None
+
+            # Position translation uses the calibrated neutral orientation.
+            # Roll/pitch are handled independently below, so rotating the pad
+            # cannot make shoulder/elbow jump to another translation branch.
+            translator_tp = list(tp)
+            translator_tp[3] = float(self._operator_orientation_anchor[0])
+            translator_tp[4] = float(self._operator_orientation_anchor[1])
+            target_gpos = _target_gpos(translator_tp)
+
+            target_changed = (
+                self._translator_target is None
+                or np.max(np.abs(target_gpos[:3] - self._translator_target[:3]))
+                > _TRANSLATOR_POSITION_DEADBAND
+            )
+            if target_changed:
+                qpos_inv, ok = so100_ik(self._lerobot_warm, target_gpos)
+                if not ok:
+                    return None, current_q
+                self._lerobot_warm = np.asarray(
+                    qpos_inv[:4], dtype=np.float64).copy()
+                self._translator_target = target_gpos.copy()
+                self._translator_solution = self._lerobot_warm.copy()
+            else:
+                qpos_inv = self._translator_solution.copy()
+
+            roll_delta = (
+                tp[3] - self._operator_orientation_anchor[0] + math.pi
+            ) % (2.0 * math.pi) - math.pi
+            pitch_delta = tp[4] - self._operator_orientation_anchor[1]
+            wrist_target = np.array([
+                np.clip(self._wrist_anchor[0]
+                        # In this MuJoCo XML, positive Wrist_Pitch folds the
+                        # gripper down and negative values lift it up.  The
+                        # prior sign sent a forward Joy-Con pitch (positive
+                        # delta in the recorded controller frame) to a
+                        # negative joint target, which produced the observed
+                        # wrist upturn.
+                        + _WRIST_PITCH_GAIN * pitch_delta,
+                        *_WRIST_PITCH_LIMITS),
+                np.clip(self._wrist_anchor[1]
+                        + _WRIST_ROLL_GAIN * roll_delta,
+                        *_WRIST_ROLL_LIMITS),
+            ], dtype=np.float64)
 
         # 2. where would those joints put the EEF in the MuJoCo model?
         joints_l = np.concatenate(([yaw_r], qpos_inv[:4]))
         eef_target = self.arm_ik.fk(joints_l)
 
-        # 3. MuJoCo IK to that position, warm-started from current_q.
-        #    腕部残差：把 so100 翻译的 wrist_flex/roll 作为目标——纯位置求解
-        #    会丢弃操作员的 pitch 意图（手腕不跟手），2026-09-01 修复。
-        #    so100 qpos_inv = [shoulder_lift, elbow_flex, wrist_flex, wrist_roll]
-        wrist_target = np.asarray(qpos_inv[2:4], dtype=np.float64)
-        q_m = self.arm_ik.ik(current_q, eef_target, tol=tol, wrist_target=wrist_target)
+        # 3. MuJoCo IK to that position, warm-started from current_q.  During
+        # live teleop wrist_target is calibrated relative to the first Joy-Con
+        # sample, so a stationary controller holds a stationary wrist.
+        q_m = self.arm_ik.ik(
+            current_q, eef_target, tol=tol, wrist_target=wrist_target,
+            wrist_w=_WRIST_IK_WEIGHT)
         return q_m, q_m.copy()
 
     def solve_eef_pos(self, eef_pos, current_q):
