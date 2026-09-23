@@ -38,6 +38,9 @@ namespace UnityRobotEnv.Networking
         [Header("References")]
         public LiberoEnvironment Env;
 
+        [Tooltip("Optional MJPEG viewer. Created automatically; inert until enabled.")]
+        public MjpegStreamer Streamer;
+
         private TcpListener _listener;
         private TcpClient _client;
         private Thread _recvThread;
@@ -47,12 +50,33 @@ namespace UnityRobotEnv.Networking
         private volatile bool _updateReady;
         private readonly object _sendLock = new object();
 
+        // Remote mirror protocol: the remote simulation is authoritative and
+        // streams this raw MuJoCo state to a windowed local player.  Keep this
+        // independent of observations: it must never render or encode images.
+        private const int SimStateProtocol = 1;
+        private long _episodeId;
+        private long _simStateSequence;
+
         public bool IsConnected { get; private set; }
 
         void Start()
         {
             if (Env == null)
                 Env = FindObjectOfType<LiberoEnvironment>();
+
+            // The optional MJPEG viewer lives on its own GameObject and is inert unless
+            // MjpegStreamer.EnableStream is set (or stream_start is sent at runtime).
+            if (Streamer == null)
+            {
+                Streamer = FindObjectOfType<MjpegStreamer>();
+                if (Streamer == null)
+                {
+                    var sgo = new GameObject("MjpegStreamer");
+                    DontDestroyOnLoad(sgo);
+                    Streamer = sgo.AddComponent<MjpegStreamer>();
+                }
+            }
+
             if (AutoStart)
                 StartServer();
         }
@@ -168,6 +192,11 @@ namespace UnityRobotEnv.Networking
         void Update()
         {
             _updateReady = true;
+
+            // Optional MJPEG: renders + encodes only while a browser is attached, so
+            // this is a no-op in a normal headless inference run.
+            Streamer?.StreamTick();
+
             while (_msgQueue.TryDequeue(out string msg))
             {
                 string reply = ProcessMessage(msg);
@@ -192,12 +221,51 @@ namespace UnityRobotEnv.Networking
                         return HandleGetObs();
                     case "get_task":
                         return HandleGetTask();
+                    case "get_sim_state":
+                        return HandleGetSimState();
                     case "set_preview":
                         // 推理/训练时隐藏右上角腕部小窗（采集时默认显示，不调用）
                         bool show = !string.Equals(ExtractString(json, "show"), "false");
                         var oc = FindObjectOfType<ObservationCollector>();
                         if (oc != null) oc.SetWristPreview(show);
                         return $"{{\"ok\":true,\"show\":{(show ? "true" : "false")}}}";
+
+                    // ── optional MJPEG viewer (see MjpegStreamer) ─────────────
+                    case "stream_start":
+                        if (Streamer == null) return "{\"error\":\"no streamer\"}";
+                        {
+                            // Optional knobs for watching DURING inference, when the
+                            // per-tick cost must be minimal:
+                            //   {"cmd":"stream_start","fps":5,"cam":"agent"}
+                            // fps caps main-thread encodes; cam=agent skips the second
+                            // camera render entirely (halves the per-tick cost).
+                            string sfps = ExtractString(json, "fps");
+                            if (float.TryParse(sfps, out float f) && f >= 1f && f <= 60f)
+                                Streamer.StreamFps = (int)f;
+                            string scam = ExtractString(json, "cam");
+                            if (!string.IsNullOrEmpty(scam))
+                                Streamer.AgentOnly = (scam == "agent");
+                            string sscale = ExtractString(json, "scale");
+                            if (int.TryParse(sscale, out int sc) && sc >= 1 && sc <= 4)
+                                Streamer.Downscale = sc;
+                        }
+                        bool ok = Streamer.StartStream();
+                        Streamer.ApplySettings(Streamer.StreamFps, Streamer.AgentOnly);
+                        return $"{{\"ok\":{(ok ? "true" : "false")},"
+                             + $"\"port\":{Streamer.StreamPortActual},"
+                             + $"\"fps\":{Streamer.StreamFps},"
+                             + $"\"agent_only\":{(Streamer.AgentOnly ? "true" : "false")}}}";
+                    case "stream_stop":
+                        Streamer?.StopStream();
+                        return "{\"ok\":true}";
+                    case "stream_status":
+                        if (Streamer == null) return "{\"ok\":true,\"enabled\":false}";
+                        return $"{{\"ok\":true,\"enabled\":"
+                             + $"{(Streamer.IsEnabled ? "true" : "false")},"
+                             + $"\"clients\":{Streamer.ClientCount},"
+                             + $"\"port\":{Streamer.StreamPortActual},"
+                             + $"\"has_frame\":{(Streamer.HasFrame ? "true" : "false")}}}";
+
                     default:
                         return $"{{\"error\":\"unknown cmd: {cmd}\"}}";
                 }
@@ -211,6 +279,8 @@ namespace UnityRobotEnv.Networking
         private string HandleReset()
         {
             _stepCount = 0;
+            _episodeId++;
+            _simStateSequence = 0;
 
             if (Env != null)
                 return ObsToJson(Env.ResetEnvironment());
@@ -227,6 +297,16 @@ namespace UnityRobotEnv.Networking
         /// </summary>
         public void ResetScene()
         {
+            // In read-only mirror mode the remote player owns reset/random
+            // placement.  Forward UI/TCP reset intent instead of mutating this
+            // local display scene.
+            var mirror = FindObjectOfType<RemoteMirrorClient>();
+            if (mirror != null && mirror.IsMirrorActive)
+            {
+                mirror.RequestReset();
+                Debug.Log("[TrainingServer] Forwarded reset request to remote mirror authority.");
+                return;
+            }
             if (MjScene.InstanceExists)
             {
                 unsafe
@@ -536,6 +616,146 @@ namespace UnityRobotEnv.Networking
                 return $"{{\"language_instruction\":\"{EscapeJson(lang)}\"}}";
             }
             return $"{{\"language_instruction\":\"{EscapeJson(LanguageInstruction)}\"}}";
+        }
+
+        /// <summary>
+        /// Export the complete dynamic MuJoCo state for a read-only mirror
+        /// player.  This deliberately contains no observation fields and no
+        /// rendered image data: qpos covers robot and free-joint objects,
+        /// while qvel/act/ctrl preserve the rest of the physical state.
+        /// </summary>
+        public unsafe string HandleGetSimState()
+        {
+            if (!MjScene.InstanceExists || MjScene.Instance.Model == null || MjScene.Instance.Data == null)
+                return "{\"error\":\"MuJoCo scene is not ready\"}";
+
+            var model = MjScene.Instance.Model;
+            var data = MjScene.Instance.Data;
+            var sb = new StringBuilder();
+            sb.Append("{\"ok\":true");
+            sb.Append(",\"protocol\":").Append(SimStateProtocol);
+            sb.Append(",\"episode_id\":").Append(_episodeId);
+            sb.Append(",\"seq\":").Append(++_simStateSequence);
+            sb.Append(",\"sim_time\":").Append(data->time.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+            sb.Append(",\"scene_hash\":\"").Append(ComputeSceneHash(model)).Append("\"");
+            sb.Append(",\"nq\":").Append(model->nq);
+            sb.Append(",\"nv\":").Append(model->nv);
+            sb.Append(",\"na\":").Append(model->na);
+            sb.Append(",\"nu\":").Append(model->nu);
+            sb.Append(",\"qpos\":").Append(DoubleArrayToJson(data->qpos, model->nq));
+            sb.Append(",\"qvel\":").Append(DoubleArrayToJson(data->qvel, model->nv));
+            sb.Append(",\"act\":").Append(DoubleArrayToJson(data->act, model->na));
+            sb.Append(",\"ctrl\":").Append(DoubleArrayToJson(data->ctrl, model->nu));
+            sb.Append(",\"joint_qposadr\":[");
+            for (int j = 0; j < model->njnt; j++)
+            {
+                if (j > 0) sb.Append(',');
+                sb.Append(model->jnt_qposadr[j]);
+            }
+            sb.Append("],\"joint_type\":[");
+            for (int j = 0; j < model->njnt; j++)
+            {
+                if (j > 0) sb.Append(',');
+                sb.Append(model->jnt_type[j]);
+            }
+            sb.Append("]");
+            sb.Append(",\"joint_names\":").Append(MuJoCoNameArrayToJson(model, MujocoLib.mjtObj.mjOBJ_JOINT, model->njnt));
+            sb.Append(",\"actuator_names\":").Append(MuJoCoNameArrayToJson(model, MujocoLib.mjtObj.mjOBJ_ACTUATOR, model->nu));
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        /// <summary>Fingerprint of the runtime MuJoCo layout used by mirror peers.</summary>
+        public unsafe string GetSimSceneHash()
+        {
+            if (!MjScene.InstanceExists || MjScene.Instance.Model == null) return "";
+            return ComputeSceneHash(MjScene.Instance.Model);
+        }
+
+        private static unsafe string ComputeSceneHash(MujocoLib.mjModel_* model)
+        {
+            // FNV-1a is sufficient here: this is a compatibility guard, not a
+            // cryptographic signature.  Build-time import order differs between
+            // Windows and Linux, so numeric qpos/dof addresses are deliberately
+            // excluded.  The wire protocol maps qpos/qvel/ctrl by these stable
+            // MuJoCo names before applying a packet on the mirror player.
+            ulong hash = 14695981039346656037UL;
+            void Mix(int value)
+            {
+                unchecked
+                {
+                    hash ^= (uint)value;
+                    hash *= 1099511628211UL;
+                }
+            }
+            Mix(model->nq); Mix(model->nv); Mix(model->na); Mix(model->nu); Mix(model->njnt);
+            var layout = new List<string>();
+            for (int j = 0; j < model->njnt; j++)
+                layout.Add($"J:{StableMuJoCoName(model, MujocoLib.mjtObj.mjOBJ_JOINT, j)}:{model->jnt_type[j]}");
+            for (int a = 0; a < model->nu; a++)
+                layout.Add($"A:{StableMuJoCoName(model, MujocoLib.mjtObj.mjOBJ_ACTUATOR, a)}");
+            layout.Sort(StringComparer.Ordinal);
+            foreach (string entry in layout)
+                foreach (char ch in entry) Mix(ch);
+            return hash.ToString("x16");
+        }
+
+        private static unsafe string StableMuJoCoName(MujocoLib.mjModel_* model, MujocoLib.mjtObj type, int id)
+        {
+            // Do not call mj_id2name here: this Tuanjie binding marshals the
+            // native const char* as an owned string and can corrupt the Player
+            // heap on Windows.  Components are already bound to the same ids.
+            string name = "";
+            if (type == MujocoLib.mjtObj.mjOBJ_JOINT)
+            {
+                foreach (var joint in UnityEngine.Object.FindObjectsOfType<MjBaseJoint>())
+                    if (joint.MujocoId == id) { name = joint.MujocoName ?? ""; break; }
+            }
+            else if (type == MujocoLib.mjtObj.mjOBJ_ACTUATOR)
+            {
+                foreach (var actuator in UnityEngine.Object.FindObjectsOfType<MjActuator>())
+                    if (actuator.MujocoId == id) { name = actuator.MujocoName ?? ""; break; }
+            }
+            if (string.IsNullOrEmpty(name)) return $"<missing-{(int)type}-{id}>";
+            // Tuanjie appends a numeric instance suffix while it imports an
+            // otherwise identical scene.  The source joint names here already
+            // carry their semantic number before that suffix (joint_29_7), so
+            // remove only the final generated segment.
+            int split = name.LastIndexOf('_');
+            if (split >= 0 && name.Length - split - 1 >= 1)
+            {
+                bool digits = true;
+                for (int i = split + 1; i < name.Length; i++)
+                    if (!char.IsDigit(name[i])) { digits = false; break; }
+                if (digits) name = name.Substring(0, split);
+            }
+            return name;
+        }
+
+        private static unsafe string DoubleArrayToJson(double* values, int length)
+        {
+            var sb = new StringBuilder();
+            sb.Append('[');
+            for (int i = 0; i < length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(values[i].ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            sb.Append(']');
+            return sb.ToString();
+        }
+
+        private static unsafe string MuJoCoNameArrayToJson(MujocoLib.mjModel_* model, MujocoLib.mjtObj type, int length)
+        {
+            var sb = new StringBuilder();
+            sb.Append('[');
+            for (int i = 0; i < length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append('"').Append(StableMuJoCoName(model, type, i).Replace("\\", "\\\\").Replace("\"", "\\\"")).Append('"');
+            }
+            sb.Append(']');
+            return sb.ToString();
         }
 
         private string ObsToJson(Observation obs)

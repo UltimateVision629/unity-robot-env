@@ -43,6 +43,11 @@ public static class BuildLinux
             NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         Debug.Log("[BuildLinux] NewScene created, importing " + XmlAsset);
 
+        // NOTE: do NOT change camera clear color / lighting here. Verified 2026-09-21
+        // (tools/out/old_vs_new.png): the DefaultGameObjects scene renders get_obs
+        // images visually identical to the old build the demos came from. The apparent
+        // mismatch was MJPEG full-frame frames vs letterboxed get_obs images.
+
         var importer = new MjImporterWithAssets();
         var root = importer.ImportFile(XmlAsset);
         if (root == null)
@@ -55,11 +60,20 @@ public static class BuildLinux
         PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone,
             ScriptingImplementation.Mono2x);
 
-        // Vulkan 优先(服务器 NVIDIA GPU 硬件渲染,Vulkan 走 render 节点不依赖 Xorg/X11 GLX),
-        // OpenGLCore 兜底(本地 Windows GPU / 无 Vulkan 环境自动回退)。
+        // Incremental GC: spreads collection work across frames. The MJPEG viewer's
+        // worker thread allocates ~350 KB/frame; without this, stop-the-world pauses
+        // land on the control loop and measurably reduce task success at high fps.
+        PlayerSettings.gcIncremental = true;
+
+        // OpenGLCore 优先 —— 2026-09-21 在 AutoDL 的 RTX 4080 SUPER 上实测：
+        //   Vulkan 优先  -> "No available video device" 后段错误 (signo:11)
+        //   OpenGLCore   -> xvfb-run 下渲染成功 (agentview std 74.8,真实画面)
+        // 两者都需要显示设备（xvfb-run 提供）；但无头云机上 Vulkan 这条路走不通，
+        // 所以把 OpenGLCore 放第一位，Vulkan 作为真实 X11 桌面环境的兜底。
+        // 详见 PROJECT_NOTES.md 的无头运行一节。
         PlayerSettings.SetGraphicsAPIs(
             BuildTarget.StandaloneLinux64,
-            new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLCore });
+            new[] { GraphicsDeviceType.OpenGLCore, GraphicsDeviceType.Vulkan });
         Debug.Log("[BuildLinux] GraphicsAPIs = "
                   + string.Join(", ", PlayerSettings.GetGraphicsAPIs(
                       BuildTarget.StandaloneLinux64)));
@@ -67,7 +81,7 @@ public static class BuildLinux
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { SceneAsset },
-            locationPathName = Path.Combine(OutDir, "libero-unity"),
+            locationPathName = Path.Combine(OutDir, "unity-robot-env"),
             target = BuildTarget.StandaloneLinux64,
             options = BuildOptions.None
         });

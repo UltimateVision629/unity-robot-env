@@ -54,6 +54,8 @@ PlayerSettings:
   unsupportedMSAAFallback: 0
   m_SpriteBatchVertexThreshold: 300
   m_MTRendering: 1
+  renderThreadParallel: 0
+  renderThreadExp: 0
   mipStripping: 0
   numberOfMipsStripped: 0
   numberOfMipsStrippedPerMipmapLimitGroup: {}
@@ -84,11 +86,12 @@ PlayerSettings:
   androidAutoRotationBehavior: 1
   androidUrasMode: 0
   disableBluetoothAudioUpdate: 0
+  enableURASMultiView: 0
   androidEnableSensors: 0
   androidPredictiveBackSupport: 0
   defaultIsNativeResolution: 1
   macRetinaSupport: 1
-  runInBackground: 0
+  runInBackground: 1
   captureSingleScreen: 0
   muteOtherAudioSources: 0
   Prepare IOS For Recording: 0
@@ -109,7 +112,8 @@ PlayerSettings:
   bakeCollisionMeshes: 0
   forceSingleInstance: 0
   useFlipModelSwapchain: 1
-  resizableWindow: 0
+  resizableWindow: 1
+  renderOverUI: 0
   useMacAppStoreValidation: 0
   wglDisableFBODepthStencil: 0
   macAppStoreCategory: public.app-category.games
@@ -149,10 +153,22 @@ PlayerSettings:
   switchNVNMaxPublicSamplerIDCount: 0
   switchNVNGraphicsFirmwareMemory: 32
   switchMaxWorkerMultiple: 8
+  switch2QueueCommandMemory: 1048576
+  switch2QueueControlMemory: 16384
+  switch2QueueComputeMemory: 262144
+  switch2NVNShaderPoolsGranularity: 33554432
+  switch2NVNDefaultPoolsGranularity: 16777216
+  switch2NVNOtherPoolsGranularity: 16777216
+  switch2GpuScratchPoolGranularity: 2097152
+  switch2AllowGpuScratchShrinking: 0
+  switch2NVNMaxPublicTextureIDCount: 0
+  switch2NVNMaxPublicSamplerIDCount: 0
+  switch2MaxWorkerMultiple: 8
   openHarmonyStartInFullscreen: 1
   openHarmonyRenderOutsideSafeArea: 1
   openHarmonyResizableWindow: 0
   openHarmonyEnableLowLatencyAudio: 1
+  openHarmonyLaunchAccelerationAbility: 0
   openHarmonyFullscreenMode: 1
   openHarmonyAutoRotationBehavior: 1
   openHarmonyBlitType: 0
@@ -160,6 +176,8 @@ PlayerSettings:
   openHarmonyDefaultWindowHeight: 1080
   openHarmonyMinimumWindowWidth: 400
   openHarmonyMinimumWindowHeight: 300
+  openHarmonyMaximumWindowRatio: 10
+  openHarmonyMinimumWindowRatio: 0.1
   stadiaPresentMode: 0
   stadiaTargetFramerate: 0
   vulkanNumSwapchainBuffers: 3
@@ -216,11 +234,11 @@ PlayerSettings:
   VertexChannelCompressionMask: 4054
   iPhoneSdkVersion: 988
   iOSSimulatorArchitecture: 0
-  iOSTargetOSVersionString: 12.0
+  iOSTargetOSVersionString: 13.0
   tvOSSdkVersion: 0
   tvOSSimulatorArchitecture: 0
   tvOSRequireExtendedGameController: 0
-  tvOSTargetOSVersionString: 12.0
+  tvOSTargetOSVersionString: 13.0
   VisionOSSdkVersion: 0
   VisionOSTargetOSVersionString: 1.0
   uIPrerenderedIcon: 0
@@ -328,7 +346,10 @@ PlayerSettings:
   m_BuildTargetGraphicsJobMode: []
   m_BuildTargetGraphicsAPIs:
   - m_BuildTarget: LinuxStandaloneSupport
-    m_APIs: 1500000011000000
+    m_APIs: 1100000015000000
+    m_Automatic: 0
+  - m_BuildTarget: WindowsStandaloneSupport
+    m_APIs: 0200000015000000
     m_Automatic: 0
   m_BuildTargetVRSettings: []
   m_DefaultShaderChunkSizeInMB: 16
@@ -337,12 +358,25 @@ PlayerSettings:
   openGLRequireES31AEP: 0
   openGLRequireES32: 0
   m_TemplateCustomTags: {}
+  renderThreadMap:
+    Standalone: 0
+    WebGL: 0
+    WeixinMiniGame: 0
   mobileMTRendering:
     Android: 1
     HMIAndroid: 1
+    OpenHarmony: 1
     VisionOS: 1
     iPhone: 1
     tvOS: 1
+  m_VirtualGeometryRuntimeMap:
+    Android: 1
+    Standalone: 1
+    iPhone: 1
+  m_VirtualGeometryDataEncodingMap:
+    Android: 1
+    Standalone: 2
+    iPhone: 1
   m_BuildTargetGroupLightmapEncodingQuality: []
   m_BuildTargetGroupHDRCubemapEncodingQuality: []
   m_BuildTargetGroupLightmapSettings: []
@@ -504,6 +538,152 @@ PlayerSettings:
   switchEnableRamDiskSupport: 0
   switchMicroSleepForYieldTime: 25
   switchRamDiskSpaceSize: 12
+  switch2NMETAOverride: 
+  switch2NetLibKey: 
+  switch2SocketMemoryPoolSize: 6144
+  switch2SocketAllocatorPoolSize: 128
+  switch2SocketConcurrencyLimit: 14
+  switch2ScreenResolutionBehavior: 1
+  switch2HandheldResolution: 1
+  switch2TvResolution: 3
+  switch2UseCPUProfiler: 0
+  switch2EnableFileSystemTrace: 0
+  switch2LTOSetting: 0
+  switch2ApplicationID: 0x0400d4d000020000
+  switch2NSODependencies: 
+  switch2CompilerFlags: 
+  switch2TitleNames_0: 
+  switch2TitleNames_1: 
+  switch2TitleNames_2: 
+  switch2TitleNames_3: 
+  switch2TitleNames_4: 
+  switch2TitleNames_5: 
+  switch2TitleNames_6: 
+  switch2TitleNames_7: 
+  switch2TitleNames_8: 
+  switch2TitleNames_9: 
+  switch2TitleNames_10: 
+  switch2TitleNames_11: 
+  switch2TitleNames_12: 
+  switch2TitleNames_13: 
+  switch2TitleNames_14: 
+  switch2TitleNames_15: 
+  switch2PublisherNames_0: 
+  switch2PublisherNames_1: 
+  switch2PublisherNames_2: 
+  switch2PublisherNames_3: 
+  switch2PublisherNames_4: 
+  switch2PublisherNames_5: 
+  switch2PublisherNames_6: 
+  switch2PublisherNames_7: 
+  switch2PublisherNames_8: 
+  switch2PublisherNames_9: 
+  switch2PublisherNames_10: 
+  switch2PublisherNames_11: 
+  switch2PublisherNames_12: 
+  switch2PublisherNames_13: 
+  switch2PublisherNames_14: 
+  switch2PublisherNames_15: 
+  switch2Icons_0: {fileID: 0}
+  switch2Icons_1: {fileID: 0}
+  switch2Icons_2: {fileID: 0}
+  switch2Icons_3: {fileID: 0}
+  switch2Icons_4: {fileID: 0}
+  switch2Icons_5: {fileID: 0}
+  switch2Icons_6: {fileID: 0}
+  switch2Icons_7: {fileID: 0}
+  switch2Icons_8: {fileID: 0}
+  switch2Icons_9: {fileID: 0}
+  switch2Icons_10: {fileID: 0}
+  switch2Icons_11: {fileID: 0}
+  switch2Icons_12: {fileID: 0}
+  switch2Icons_13: {fileID: 0}
+  switch2Icons_14: {fileID: 0}
+  switch2Icons_15: {fileID: 0}
+  switch2SmallIcons_0: {fileID: 0}
+  switch2SmallIcons_1: {fileID: 0}
+  switch2SmallIcons_2: {fileID: 0}
+  switch2SmallIcons_3: {fileID: 0}
+  switch2SmallIcons_4: {fileID: 0}
+  switch2SmallIcons_5: {fileID: 0}
+  switch2SmallIcons_6: {fileID: 0}
+  switch2SmallIcons_7: {fileID: 0}
+  switch2SmallIcons_8: {fileID: 0}
+  switch2SmallIcons_9: {fileID: 0}
+  switch2SmallIcons_10: {fileID: 0}
+  switch2SmallIcons_11: {fileID: 0}
+  switch2SmallIcons_12: {fileID: 0}
+  switch2SmallIcons_13: {fileID: 0}
+  switch2SmallIcons_14: {fileID: 0}
+  switch2SmallIcons_15: {fileID: 0}
+  switch2ManualHTML: 
+  switch2AccessibleURLs: 
+  switch2LegalInformation: 
+  switch2MainThreadStackSize: 1048576
+  switch2PresenceGroupId: 
+  switch2LogoHandling: 0
+  switch2ReleaseVersion: 0
+  switch2DisplayVersion: 1.0.0
+  switch2StartupUserAccount: 0
+  switch2SupportedLanguagesMask: 0
+  switch2LogoType: 0
+  switch2ApplicationErrorCodeCategory: 
+  switch2UserAccountSaveDataSize: 0
+  switch2UserAccountSaveDataJournalSize: 0
+  switch2ApplicationAttribute: 0
+  switch2CardSpecSize: -1
+  switch2CardSpecClock: -1
+  switch2RatingsMask: 0
+  switch2RatingsInt_0: 0
+  switch2RatingsInt_1: 0
+  switch2RatingsInt_2: 0
+  switch2RatingsInt_3: 0
+  switch2RatingsInt_4: 0
+  switch2RatingsInt_5: 0
+  switch2RatingsInt_6: 0
+  switch2RatingsInt_7: 0
+  switch2RatingsInt_8: 0
+  switch2RatingsInt_9: 0
+  switch2RatingsInt_10: 0
+  switch2RatingsInt_11: 0
+  switch2RatingsInt_12: 0
+  switch2LocalCommunicationIds_0: 
+  switch2LocalCommunicationIds_1: 
+  switch2LocalCommunicationIds_2: 
+  switch2LocalCommunicationIds_3: 
+  switch2LocalCommunicationIds_4: 
+  switch2LocalCommunicationIds_5: 
+  switch2LocalCommunicationIds_6: 
+  switch2LocalCommunicationIds_7: 
+  switch2ParentalControl: 0
+  switch2AllowsScreenshot: 1
+  switch2AllowsVideoCapturing: 1
+  switch2AllowsRuntimeAddOnContentInstall: 0
+  switch2DataLossConfirmation: 0
+  switch2UserAccountLockEnabled: 0
+  switch2SystemResourceMemory: 16777216
+  switch2SupportedNpadStyles: 22
+  switch2NativeFsCacheSize: 32
+  switch2IsHoldTypeHorizontal: 1
+  switch2SupportedNpadCount: 8
+  switch2EnableTouchScreen: 1
+  switch2SocketConfigEnabled: 0
+  switch2TcpInitialSendBufferSize: 32
+  switch2TcpInitialReceiveBufferSize: 64
+  switch2TcpAutoSendBufferSizeMax: 256
+  switch2TcpAutoReceiveBufferSizeMax: 256
+  switch2UdpSendBufferSize: 9
+  switch2UdpReceiveBufferSize: 42
+  switch2SocketBufferEfficiency: 4
+  switch2SocketInitializeEnabled: 1
+  switch2NetworkInterfaceManagerInitializeEnabled: 1
+  switch2DisableHTCSPlayerConnection: 0
+  switch2UseNewStyleFilepaths: 1
+  switch2UseLegacyFmodPriorities: 0
+  switch2UseMicroSleepForYield: 1
+  switch2EnableRamDiskSupport: 0
+  switch2MicroSleepForYieldTime: 25
+  switch2RamDiskSpaceSize: 12
   ps4NPAgeRating: 12
   ps4NPTitleSecret: 
   ps4NPTrophyPackPath: 
@@ -697,7 +877,6 @@ PlayerSettings:
     m_VersionCode: 1
     m_VersionName: 
   hmiPlayerDataPath: 
-  hmiForceSRGBBlit: 0
   embeddedLinuxEnableGamepadInput: 0
   logStartupTiming: 0
   hmiCpuConfiguration: 
@@ -759,6 +938,11 @@ PlayerSettings:
   weixinMiniGamePreserveEventDelegate: 0
   activeSubplatform: 1
   serializedFileTypeTreeMemoryOptimization: 0
+  stripBuiltinResources: 0
+  minigameMTRendering: 0
+  weixinMiniGameInvariantPosition: 0
+  minigameJobEnabled: 0
+  minigameJobWorkerCount: 2
   activeInputHandler: 0
   windowsGamepadBackendHint: 0
   cloudProjectId: 
@@ -774,6 +958,10 @@ PlayerSettings:
   androidEGLPriority: 0
   platformRequiresReadableAssets: 0
   virtualTexturingSupportEnabled: 0
-  packClustersForPlayer: 0
   insecureHttpOption: 0
   useStringInternPool: 0
+  renderThreadTakeSnapshotOnlyOnce: 0
+  miniGameRenderThreadSyncMode: 0
+  miniGameRenderThreadWorkerWaitMode: 1
+  miniGameRenderThreadWorkerWaitTimeout: 1
+  miniGameRenderThreadLoopMode: 2
